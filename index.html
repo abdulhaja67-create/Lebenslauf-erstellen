@@ -1,298 +1,1189 @@
-import tkinter as tk
-from tkinter import colorchooser
+from flask import Flask, request, redirect, url_for, send_file, render_template_string
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from reportlab.lib import colors
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from werkzeug.utils import secure_filename
+
+from io import BytesIO
+from urllib.parse import urlencode, quote_plus
+import os
+import re
 
 
-# =========================
-# Hauptfenster
-# =========================
+app = Flask(__name__)
 
-root = tk.Tk()
-root.title("Abdul's Lebenslauf")
-root.geometry("600x500")
-root.configure(bg="white")
+# -----------------------------------------
+# Einstellungen
+# -----------------------------------------
 
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # max. 8 MB
 
-# =========================
-# Startseite
-# =========================
-
-welcome = tk.Label(
-    root,
-    text="Welcome to Abdul's Lebenslauf",
-    font=("Arial", 24, "bold"),
-    bg="white",
-    fg="black"
-)
-welcome.pack(pady=70)
-
-beschreibung = tk.Label(
-    root,
-    text="Du kannst hier deinen eigenen Lebenslauf erstellen.",
-    font=("Arial", 14),
-    bg="white",
-    fg="black"
-)
-beschreibung.pack(pady=10)
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-def starten():
-    welcome.destroy()
-    beschreibung.destroy()
-    starten_button.destroy()
+# -----------------------------------------
+# Fragen
+# -----------------------------------------
 
-    lebenslauf_start()
+QUESTIONS = [
+    ("vorname", "Wie heißt du mit Vornamen?"),
+    ("nachname", "Wie heißt du mit Nachnamen?"),
+    ("geburtsdatum", "Wann bist du geboren? (TT.MM.JJJJ)"),
+    ("adresse", "Wo wohnst du?"),
+    ("telefon", "Wie ist deine Telefonnummer?"),
+    ("email", "Wie ist deine E-Mail-Adresse?"),
+
+    ("schule", "Welche Schule besuchst du oder hast du besucht?"),
+    ("abschluss", "Welchen Schulabschluss hast du oder machst du gerade?"),
+    ("schulzeit", "Von wann bis wann warst du in der Schule?"),
+
+    ("firma", "Bei welcher Firma hast du gearbeitet oder ein Praktikum gemacht?"),
+    ("position", "Welche Tätigkeit oder Position hattest du dort?"),
+    ("zeitraum", "In welchem Zeitraum war das?"),
+    ("aufgaben", "Welche Aufgaben hattest du dort?"),
+
+    ("deutsch", "Wie sind deine Deutschkenntnisse?"),
+    ("englisch", "Wie sind deine Englischkenntnisse?"),
+    ("computer", "Welche Computerkenntnisse hast du?"),
+
+    ("hobbys", "Welche Hobbys oder Interessen hast du?")
+]
 
 
-starten_button = tk.Button(
-    root,
-    text="Lebenslauf erstellen",
-    font=("Arial", 14, "bold"),
-    command=starten,
-    padx=20,
-    pady=10
-)
-starten_button.pack(pady=30)
+# -----------------------------------------
+# HTML Design
+# -----------------------------------------
+
+HTML = """
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Lebenslauf Generator</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(135deg, #eef2f7, #dfe8f5);
+            color: #1f2937;
+        }
+
+        .container {
+            width: min(900px, 94%);
+            margin: 40px auto;
+        }
+
+        .card {
+            background: white;
+            padding: 35px;
+            border-radius: 20px;
+            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.10);
+        }
+
+        .welcome {
+            text-align: center;
+            padding: 45px 20px;
+        }
+
+        h1 {
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        p {
+            line-height: 1.6;
+        }
+
+        .muted {
+            color: #6b7280;
+        }
+
+        .progress {
+            width: 100%;
+            height: 10px;
+            background: #e5e7eb;
+            border-radius: 50px;
+            overflow: hidden;
+            margin: 20px 0 30px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: #2563eb;
+            width: {{ progress }}%;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="color"],
+        input[type="file"] {
+
+            width: 100%;
+            padding: 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            font-size: 16px;
+        }
+
+        input[type="color"] {
+            height: 50px;
+            padding: 5px;
+        }
+
+        .buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 25px;
+        }
+
+        button,
+        .btn {
+
+            border: none;
+            padding: 13px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .primary {
+            background: #2563eb;
+            color: white;
+        }
+
+        .success {
+            background: #16a34a;
+            color: white;
+        }
+
+        .secondary {
+            background: #e5e7eb;
+            color: #111827;
+        }
+
+        .orange {
+            background: #f59e0b;
+            color: black;
+        }
+
+        .review {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+
+        .row {
+            padding: 10px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .row:last-child {
+            border-bottom: none;
+        }
+
+        .small {
+            font-size: 14px;
+        }
+
+        @media (max-width: 700px) {
+
+            .card {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 30px;
+            }
+
+        }
+
+    </style>
+
+</head>
 
 
-# =========================
-# Lebenslauf
-# =========================
+<body>
 
-def lebenslauf_start():
+<div class="container">
 
-    titel = tk.Label(
-        root,
-        text="Dein Lebenslauf",
-        font=("Arial", 22, "bold"),
-        bg="white"
+    <div class="card">
+
+        {{ content|safe }}
+
+    </div>
+
+</div>
+
+</body>
+
+</html>
+"""
+
+
+# -----------------------------------------
+# Hilfsfunktionen
+# -----------------------------------------
+
+def render_page(content, progress=0):
+    return render_template_string(
+        HTML,
+        content=content,
+        progress=progress
     )
-    titel.pack(pady=20)
 
-    # Eingabefelder
-    felder = {}
 
-    daten = [
-        "Vorname",
-        "Nachname",
-        "Geburtsdatum",
-        "Adresse",
-        "Telefon",
-        "E-Mail",
-        "Schule",
-        "Schulabschluss"
-    ]
+def escape_html(text):
 
-    for name in daten:
-        label = tk.Label(
-            root,
-            text=name + ":",
-            font=("Arial", 11),
-            bg="white"
+    text = text or ""
+
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def clean_text(text):
+    return (text or "").strip()
+
+
+def valid_color(value):
+
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", value or ""):
+        return value
+
+    return "#1f2937"
+
+
+def wrap_text(text, font_name, font_size, max_width):
+
+    words = text.split()
+
+    lines = []
+
+    current_line = ""
+
+    for word in words:
+
+        if current_line == "":
+            test_line = word
+        else:
+            test_line = current_line + " " + word
+
+        width = stringWidth(
+            test_line,
+            font_name,
+            font_size
         )
-        label.pack()
 
-        entry = tk.Entry(
-            root,
-            font=("Arial", 11),
-            width=40
+        if width <= max_width:
+
+            current_line = test_line
+
+        else:
+
+            if current_line:
+                lines.append(current_line)
+
+            current_line = word
+
+    if current_line:
+        lines.append(current_line)
+
+    return lines
+
+
+def draw_wrapped_text(
+    pdf,
+    text,
+    x,
+    y,
+    max_width,
+    font_name="Helvetica",
+    font_size=10,
+    line_height=14
+):
+
+    pdf.setFont(
+        font_name,
+        font_size
+    )
+
+    for paragraph in str(text).split("\n"):
+
+        lines = wrap_text(
+            paragraph,
+            font_name,
+            font_size,
+            max_width
         )
-        entry.pack(pady=3)
 
-        felder[name] = entry
+        for line in lines:
 
-
-    # =========================
-    # Schriftfarbe auswählen
-    # =========================
-
-    farbe = "#000000"
-
-    def farbe_auswaehlen():
-        nonlocal farbe
-
-        neue_farbe = colorchooser.askcolor(
-            title="Wähle die Schriftfarbe"
-        )
-
-        if neue_farbe[1]:
-            farbe = neue_farbe[1]
-            farbe_button.config(
-                bg=farbe
+            pdf.drawString(
+                x,
+                y,
+                line
             )
 
+            y -= line_height
 
-    farbe_label = tk.Label(
-        root,
-        text="Schriftfarbe:",
-        font=("Arial", 11),
-        bg="white"
+    return y
+
+
+# -----------------------------------------
+# PDF erstellen
+# -----------------------------------------
+
+def create_pdf(data, photo_path=None):
+
+    buffer = BytesIO()
+
+    pdf = canvas.Canvas(
+        buffer,
+        pagesize=A4
     )
-    farbe_label.pack(pady=(15, 3))
 
-    farbe_button = tk.Button(
-        root,
-        text="Farbe auswählen",
-        command=farbe_auswaehlen,
-        bg="black",
-        fg="white",
-        padx=15
+    width, height = A4
+
+    margin = 50
+
+    text_color = colors.HexColor(
+        valid_color(data.get("farbe"))
     )
-    farbe_button.pack()
+
+    pdf.setFillColor(text_color)
+
+    pdf.setTitle(
+        "Lebenslauf - "
+        + data.get("vorname", "")
+        + " "
+        + data.get("nachname", "")
+    )
+
+    # -------------------------------------
+    # Kopf
+    # -------------------------------------
+
+    pdf.setFont(
+        "Helvetica-Bold",
+        24
+    )
+
+    full_name = (
+        data.get("vorname", "")
+        + " "
+        + data.get("nachname", "")
+    )
+
+    pdf.drawString(
+        margin,
+        height - 65,
+        full_name
+    )
+
+    y = height - 90
+
+    pdf.setFont(
+        "Helvetica",
+        10
+    )
+
+    personal_info = [
+
+        data.get("adresse", ""),
+
+        data.get("telefon", ""),
+
+        data.get("email", ""),
+
+        "Geburtsdatum: "
+        + data.get("geburtsdatum", "")
+    ]
+
+    for info in personal_info:
+
+        if info.strip():
+
+            pdf.drawString(
+                margin,
+                y,
+                info
+            )
+
+            y -= 15
+
+    # -------------------------------------
+    # Bewerbungsfoto
+    # -------------------------------------
+
+    if photo_path and os.path.exists(photo_path):
+
+        try:
+
+            image = ImageReader(photo_path)
+
+            img_width, img_height = image.getSize()
+
+            box_width = 105
+            box_height = 130
+
+            scale = min(
+                box_width / img_width,
+                box_height / img_height
+            )
+
+            final_width = img_width * scale
+            final_height = img_height * scale
+
+            image_x = width - margin - box_width
+            image_y = height - 180
+
+            pdf.drawImage(
+                image,
+                image_x,
+                image_y,
+                width=final_width,
+                height=final_height,
+                preserveAspectRatio=True,
+                mask="auto"
+            )
+
+        except Exception:
+            pass
+
+    y -= 15
+
+    # -------------------------------------
+    # Überschrift
+    # -------------------------------------
+
+    def section(title):
+
+        nonlocal y
+
+        if y < 100:
+
+            pdf.showPage()
+
+            pdf.setFillColor(text_color)
+
+            y = height - 60
+
+        pdf.setFont(
+            "Helvetica-Bold",
+            14
+        )
+
+        pdf.drawString(
+            margin,
+            y,
+            title
+        )
+
+        y -= 10
+
+        pdf.line(
+            margin,
+            y,
+            width - margin,
+            y
+        )
+
+        y -= 20
+
+    # -------------------------------------
+    # Feld
+    # -------------------------------------
+
+    def field(label, value):
+
+        nonlocal y
+
+        value = clean_text(value)
+
+        if not value:
+            return
+
+        if y < 90:
+
+            pdf.showPage()
+
+            pdf.setFillColor(text_color)
+
+            y = height - 60
+
+        pdf.setFont(
+            "Helvetica-Bold",
+            10
+        )
+
+        pdf.drawString(
+            margin,
+            y,
+            label
+        )
+
+        y -= 14
+
+        y = draw_wrapped_text(
+            pdf,
+            value,
+            margin,
+            y,
+            width - 2 * margin,
+            font_size=10
+        )
+
+        y -= 8
+
+    # -------------------------------------
+    # Schule
+    # -------------------------------------
+
+    section("Schulbildung")
+
+    field(
+        "Schule",
+        data.get("schule")
+    )
+
+    field(
+        "Schulabschluss",
+        data.get("abschluss")
+    )
+
+    field(
+        "Schulzeit",
+        data.get("schulzeit")
+    )
+
+    # -------------------------------------
+    # Erfahrung
+    # -------------------------------------
+
+    section("Praktische Erfahrung")
+
+    field(
+        "Firma",
+        data.get("firma")
+    )
+
+    field(
+        "Tätigkeit",
+        data.get("position")
+    )
+
+    field(
+        "Zeitraum",
+        data.get("zeitraum")
+    )
+
+    field(
+        "Aufgaben",
+        data.get("aufgaben")
+    )
+
+    # -------------------------------------
+    # Kenntnisse
+    # -------------------------------------
+
+    section("Kenntnisse")
+
+    field(
+        "Deutsch",
+        data.get("deutsch")
+    )
+
+    field(
+        "Englisch",
+        data.get("englisch")
+    )
+
+    field(
+        "Computerkenntnisse",
+        data.get("computer")
+    )
+
+    # -------------------------------------
+    # Hobbys
+    # -------------------------------------
+
+    section("Interessen")
+
+    field(
+        "Hobbys und Interessen",
+        data.get("hobbys")
+    )
+
+    # -------------------------------------
+    # Unterschrift
+    # -------------------------------------
+
+    section("Weitere Angaben")
+
+    pdf.setFont(
+        "Helvetica",
+        10
+    )
+
+    pdf.drawString(
+        margin,
+        y,
+        "Ort, Datum: ______________________________"
+    )
+
+    y -= 35
+
+    pdf.drawString(
+        margin,
+        y,
+        "Unterschrift: ______________________________"
+    )
+
+    # -------------------------------------
+    # Speichern
+    # -------------------------------------
+
+    pdf.save()
+
+    buffer.seek(0)
+
+    return buffer
 
 
-    # =========================
+# -----------------------------------------
+# Startseite
+# -----------------------------------------
+
+@app.route("/")
+def home():
+
+    content = """
+
+    <div class="welcome">
+
+        <h1>
+            Welcome to Abdul's Lebenslauf
+        </h1>
+
+        <p class="muted">
+            Du kannst hier deinen eigenen Lebenslauf
+            Schritt für Schritt erstellen.
+        </p>
+
+        <div class="buttons" style="justify-content:center;">
+
+            <a
+                href="/start"
+                class="btn primary"
+            >
+                Lebenslauf erstellen
+            </a>
+
+        </div>
+
+        <p class="small muted">
+            Python • Flask • ReportLab
+        </p>
+
+    </div>
+
+    """
+
+    return render_page(content)
+
+
+# -----------------------------------------
+# Start
+# -----------------------------------------
+
+@app.route("/start")
+def start():
+
+    return redirect(
+        url_for(
+            "question",
+            index=0
+        )
+    )
+
+
+# -----------------------------------------
+# Fragen
+# -----------------------------------------
+
+@app.route(
+    "/question/<int:index>",
+    methods=["GET", "POST"]
+)
+def question(index):
+
+    # Ende
+    if index >= len(QUESTIONS):
+
+        return redirect(
+            url_for("review")
+        )
+
+    key, question_text = QUESTIONS[index]
+
+    # -------------------------------------
+    # Daten aus Formular holen
+    # -------------------------------------
+
+    data = {}
+
+    for field_key, _ in QUESTIONS:
+
+        data[field_key] = request.values.get(
+            field_key,
+            ""
+        )
+
+    # -------------------------------------
+    # Antwort speichern
+    # -------------------------------------
+
+    if request.method == "POST":
+
+        answer = clean_text(
+            request.form.get(key)
+        )
+
+        data[key] = answer
+
+        next_index = index + 1
+
+        # Letzte Frage
+        if next_index >= len(QUESTIONS):
+
+            return redirect_with_data(
+                "/review",
+                data
+            )
+
+        return redirect_with_data(
+            f"/question/{next_index}",
+            data
+        )
+
+    # -------------------------------------
+    # Hidden Inputs
+    # -------------------------------------
+
+    hidden_inputs = ""
+
+    for field_key, _ in QUESTIONS:
+
+        if field_key == key:
+            continue
+
+        hidden_inputs += (
+            f'<input type="hidden" '
+            f'name="{field_key}" '
+            f'value="{escape_html(data.get(field_key, ""))}">'
+        )
+
+    # -------------------------------------
+    # Fortschritt
+    # -------------------------------------
+
+    progress = int(
+        (index / len(QUESTIONS)) * 100
+    )
+
+    # -------------------------------------
+    # Seite
+    # -------------------------------------
+
+    content = f"""
+
+    <h2>
+        Frage {index + 1} von {len(QUESTIONS)}
+    </h2>
+
+    <div class="progress">
+        <div class="progress-bar"></div>
+    </div>
+
+    <form method="POST">
+
+        {hidden_inputs}
+
+        <label for="answer">
+            {escape_html(question_text)}
+        </label>
+
+        <input
+            type="text"
+            id="answer"
+            name="{key}"
+            value="{escape_html(data.get(key, ""))}"
+            autofocus
+            required
+        >
+
+        <div class="buttons">
+
+            <button
+                type="submit"
+                class="primary"
+            >
+                Weiter
+            </button>
+
+            <a
+                href="/"
+                class="btn secondary"
+            >
+                Abbrechen
+            </a>
+
+        </div>
+
+    </form>
+
+    """
+
+    return render_page(
+        content,
+        max(progress, 2)
+    )
+
+
+# -----------------------------------------
+# Review
+# -----------------------------------------
+
+@app.route(
+    "/review",
+    methods=["GET", "POST"]
+)
+def review():
+
+    data = {}
+
+    for field_key, _ in QUESTIONS:
+
+        data[field_key] = request.values.get(
+            field_key,
+            ""
+        )
+
+    # -------------------------------------
     # PDF erstellen
-    # =========================
+    # -------------------------------------
 
-    def pdf_erstellen():
+    if request.method == "POST":
 
-        vorname = felder["Vorname"].get()
-        nachname = felder["Nachname"].get()
-        geburtsdatum = felder["Geburtsdatum"].get()
-        adresse = felder["Adresse"].get()
-        telefon = felder["Telefon"].get()
-        email = felder["E-Mail"].get()
-        schule = felder["Schule"].get()
-        abschluss = felder["Schulabschluss"].get()
-
-        pdf = canvas.Canvas(
-            "Lebenslauf.pdf",
-            pagesize=A4
+        data["farbe"] = request.form.get(
+            "farbe",
+            "#1f2937"
         )
 
-        breite, hoehe = A4
+        photo_path = None
 
-        # Farbe umwandeln
-        from reportlab.lib.colors import HexColor
-        pdf.setFillColor(HexColor(farbe))
+        photo = request.files.get("foto")
 
-        pdf.setFont(
-            "Helvetica-Bold",
-            24
+        if photo and photo.filename:
+
+            filename = secure_filename(
+                photo.filename
+            )
+
+            if filename:
+
+                photo_path = os.path.join(
+                    UPLOAD_FOLDER,
+                    filename
+                )
+
+                photo.save(
+                    photo_path
+                )
+
+        pdf_file = create_pdf(
+            data,
+            photo_path
         )
 
-        pdf.drawString(
-            50,
-            hoehe - 60,
-            "LEBENSLAUF"
+        return send_file(
+            pdf_file,
+            as_attachment=True,
+            download_name="Lebenslauf.pdf",
+            mimetype="application/pdf"
         )
 
-        y = hoehe - 110
+    # -------------------------------------
+    # Hidden Inputs
+    # -------------------------------------
 
-        pdf.setFont(
-            "Helvetica-Bold",
-            16
+    hidden_inputs = ""
+
+    for field_key, _ in QUESTIONS:
+
+        hidden_inputs += (
+            f'<input type="hidden" '
+            f'name="{field_key}" '
+            f'value="{escape_html(data.get(field_key, ""))}">'
         )
 
-        pdf.drawString(
-            50,
-            y,
-            "Persönliche Daten"
+    # -------------------------------------
+    # Review anzeigen
+    # -------------------------------------
+
+    labels = {
+
+        "vorname": "Vorname",
+        "nachname": "Nachname",
+        "geburtsdatum": "Geburtsdatum",
+        "adresse": "Adresse",
+        "telefon": "Telefon",
+        "email": "E-Mail",
+
+        "schule": "Schule",
+        "abschluss": "Schulabschluss",
+        "schulzeit": "Schulzeit",
+
+        "firma": "Firma",
+        "position": "Tätigkeit",
+        "zeitraum": "Zeitraum",
+        "aufgaben": "Aufgaben",
+
+        "deutsch": "Deutsch",
+        "englisch": "Englisch",
+        "computer": "Computerkenntnisse",
+
+        "hobbys": "Hobbys / Interessen"
+    }
+
+    rows = ""
+
+    for field_key, label in labels.items():
+
+        value = clean_text(
+            data.get(field_key, "")
         )
 
-        y -= 30
+        if value:
 
-        pdf.setFont(
-            "Helvetica",
-            11
-        )
+            rows += f"""
 
-        pdf.drawString(
-            50,
-            y,
-            f"Name: {vorname} {nachname}"
-        )
+            <div class="row">
 
-        y -= 20
-        pdf.drawString(
-            50,
-            y,
-            f"Geburtsdatum: {geburtsdatum}"
-        )
+                <strong>
+                    {label}:
+                </strong>
 
-        y -= 20
-        pdf.drawString(
-            50,
-            y,
-            f"Adresse: {adresse}"
-        )
+                {escape_html(value)}
 
-        y -= 20
-        pdf.drawString(
-            50,
-            y,
-            f"Telefon: {telefon}"
-        )
+            </div>
 
-        y -= 20
-        pdf.drawString(
-            50,
-            y,
-            f"E-Mail: {email}"
-        )
+            """
 
-        y -= 50
+    # -------------------------------------
+    # Web-Suche
+    # -------------------------------------
 
-        pdf.setFont(
-            "Helvetica-Bold",
-            16
-        )
+    web_buttons = ""
 
-        pdf.drawString(
-            50,
-            y,
-            "Schulbildung"
-        )
-
-        y -= 30
-
-        pdf.setFont(
-            "Helvetica",
-            11
-        )
-
-        pdf.drawString(
-            50,
-            y,
-            f"Schule: {schule}"
-        )
-
-        y -= 20
-
-        pdf.drawString(
-            50,
-            y,
-            f"Abschluss: {abschluss}"
-        )
-
-        pdf.save()
-
-        fertig.config(
-            text="✓ Dein Lebenslauf wurde erstellt!"
-        )
-
-
-    erstellen_button = tk.Button(
-        root,
-        text="PDF erstellen",
-        font=("Arial", 13, "bold"),
-        command=pdf_erstellen,
-        padx=20,
-        pady=8
+    company = clean_text(
+        data.get("firma")
     )
 
-    erstellen_button.pack(pady=20)
-
-    fertig = tk.Label(
-        root,
-        text="",
-        font=("Arial", 12),
-        bg="white"
+    school = clean_text(
+        data.get("schule")
     )
 
-    fertig.pack()
+    if company:
+
+        web_buttons += f"""
+
+        <a
+            class="btn orange"
+            target="_blank"
+            href="https://www.google.com/search?q={quote_plus(company)}"
+        >
+            Firma im Web suchen
+        </a>
+
+        """
+
+    if school:
+
+        web_buttons += f"""
+
+        <a
+            class="btn orange"
+            target="_blank"
+            href="https://www.google.com/search?q={quote_plus(school)}"
+        >
+            Schule im Web suchen
+        </a>
+
+        """
+
+    # -------------------------------------
+    # Seite
+    # -------------------------------------
+
+    content = f"""
+
+    <h2>
+        Fast fertig 🎉
+    </h2>
+
+    <p class="muted">
+        Kontrolliere deine Angaben und erstelle danach
+        deinen PDF-Lebenslauf.
+    </p>
+
+    <div class="review">
+
+        {rows}
+
+    </div>
+
+    <form
+        method="POST"
+        enctype="multipart/form-data"
+    >
+
+        {hidden_inputs}
+
+        <div style="margin-top:25px;">
+
+            <label for="farbe">
+                Textfarbe auswählen
+            </label>
+
+            <input
+                id="farbe"
+                type="color"
+                name="farbe"
+                value="#1f2937"
+            >
+
+        </div>
 
 
-root.mainloop()
+        <div style="margin-top:25px;">
+
+            <label for="foto">
+                Bewerbungsfoto
+            </label>
+
+            <input
+                id="foto"
+                type="file"
+                name="foto"
+                accept="image/png,image/jpeg,image/jpg"
+            >
+
+            <p class="small muted">
+                Foto ist optional. JPG oder PNG, maximal 8 MB.
+            </p>
+
+        </div>
+
+
+        <div class="buttons">
+
+            <button
+                type="submit"
+                class="success"
+            >
+                PDF erstellen
+            </button>
+
+            {web_buttons}
+
+            <a
+                href="/"
+                class="btn secondary"
+            >
+                Neu starten
+            </a>
+
+        </div>
+
+    </form>
+
+    """
+
+    return render_page(
+        content,
+        100
+    )
+
+
+# -----------------------------------------
+# Daten weitergeben
+# -----------------------------------------
+
+def redirect_with_data(path, data):
+
+    clean_data = {}
+
+    for key, value in data.items():
+
+        if value is None:
+            value = ""
+
+        clean_data[key] = value
+
+    return redirect(
+        path + "?" + urlencode(clean_data)
+    )
+
+
+# -----------------------------------------
+# Programm starten
+# -----------------------------------------
+
+if __name__ == "__main__":
+
+    print("")
+    print("======================================")
+    print("     Lebenslauf Generator")
+    print("======================================")
+    print("")
+    print("Öffne im Browser:")
+    print("http://127.0.0.1:5000")
+    print("")
+
+    app.run(
+        debug=True
+    )
+    
