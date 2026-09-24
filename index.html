@@ -1,0 +1,298 @@
+import tkinter as tk
+from tkinter import colorchooser
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+
+
+# =========================
+# Hauptfenster
+# =========================
+
+root = tk.Tk()
+root.title("Abdul's Lebenslauf")
+root.geometry("600x500")
+root.configure(bg="white")
+
+
+# =========================
+# Startseite
+# =========================
+
+welcome = tk.Label(
+    root,
+    text="Welcome to Abdul's Lebenslauf",
+    font=("Arial", 24, "bold"),
+    bg="white",
+    fg="black"
+)
+welcome.pack(pady=70)
+
+beschreibung = tk.Label(
+    root,
+    text="Du kannst hier deinen eigenen Lebenslauf erstellen.",
+    font=("Arial", 14),
+    bg="white",
+    fg="black"
+)
+beschreibung.pack(pady=10)
+
+
+def starten():
+    welcome.destroy()
+    beschreibung.destroy()
+    starten_button.destroy()
+
+    lebenslauf_start()
+
+
+starten_button = tk.Button(
+    root,
+    text="Lebenslauf erstellen",
+    font=("Arial", 14, "bold"),
+    command=starten,
+    padx=20,
+    pady=10
+)
+starten_button.pack(pady=30)
+
+
+# =========================
+# Lebenslauf
+# =========================
+
+def lebenslauf_start():
+
+    titel = tk.Label(
+        root,
+        text="Dein Lebenslauf",
+        font=("Arial", 22, "bold"),
+        bg="white"
+    )
+    titel.pack(pady=20)
+
+    # Eingabefelder
+    felder = {}
+
+    daten = [
+        "Vorname",
+        "Nachname",
+        "Geburtsdatum",
+        "Adresse",
+        "Telefon",
+        "E-Mail",
+        "Schule",
+        "Schulabschluss"
+    ]
+
+    for name in daten:
+        label = tk.Label(
+            root,
+            text=name + ":",
+            font=("Arial", 11),
+            bg="white"
+        )
+        label.pack()
+
+        entry = tk.Entry(
+            root,
+            font=("Arial", 11),
+            width=40
+        )
+        entry.pack(pady=3)
+
+        felder[name] = entry
+
+
+    # =========================
+    # Schriftfarbe auswählen
+    # =========================
+
+    farbe = "#000000"
+
+    def farbe_auswaehlen():
+        nonlocal farbe
+
+        neue_farbe = colorchooser.askcolor(
+            title="Wähle die Schriftfarbe"
+        )
+
+        if neue_farbe[1]:
+            farbe = neue_farbe[1]
+            farbe_button.config(
+                bg=farbe
+            )
+
+
+    farbe_label = tk.Label(
+        root,
+        text="Schriftfarbe:",
+        font=("Arial", 11),
+        bg="white"
+    )
+    farbe_label.pack(pady=(15, 3))
+
+    farbe_button = tk.Button(
+        root,
+        text="Farbe auswählen",
+        command=farbe_auswaehlen,
+        bg="black",
+        fg="white",
+        padx=15
+    )
+    farbe_button.pack()
+
+
+    # =========================
+    # PDF erstellen
+    # =========================
+
+    def pdf_erstellen():
+
+        vorname = felder["Vorname"].get()
+        nachname = felder["Nachname"].get()
+        geburtsdatum = felder["Geburtsdatum"].get()
+        adresse = felder["Adresse"].get()
+        telefon = felder["Telefon"].get()
+        email = felder["E-Mail"].get()
+        schule = felder["Schule"].get()
+        abschluss = felder["Schulabschluss"].get()
+
+        pdf = canvas.Canvas(
+            "Lebenslauf.pdf",
+            pagesize=A4
+        )
+
+        breite, hoehe = A4
+
+        # Farbe umwandeln
+        from reportlab.lib.colors import HexColor
+        pdf.setFillColor(HexColor(farbe))
+
+        pdf.setFont(
+            "Helvetica-Bold",
+            24
+        )
+
+        pdf.drawString(
+            50,
+            hoehe - 60,
+            "LEBENSLAUF"
+        )
+
+        y = hoehe - 110
+
+        pdf.setFont(
+            "Helvetica-Bold",
+            16
+        )
+
+        pdf.drawString(
+            50,
+            y,
+            "Persönliche Daten"
+        )
+
+        y -= 30
+
+        pdf.setFont(
+            "Helvetica",
+            11
+        )
+
+        pdf.drawString(
+            50,
+            y,
+            f"Name: {vorname} {nachname}"
+        )
+
+        y -= 20
+        pdf.drawString(
+            50,
+            y,
+            f"Geburtsdatum: {geburtsdatum}"
+        )
+
+        y -= 20
+        pdf.drawString(
+            50,
+            y,
+            f"Adresse: {adresse}"
+        )
+
+        y -= 20
+        pdf.drawString(
+            50,
+            y,
+            f"Telefon: {telefon}"
+        )
+
+        y -= 20
+        pdf.drawString(
+            50,
+            y,
+            f"E-Mail: {email}"
+        )
+
+        y -= 50
+
+        pdf.setFont(
+            "Helvetica-Bold",
+            16
+        )
+
+        pdf.drawString(
+            50,
+            y,
+            "Schulbildung"
+        )
+
+        y -= 30
+
+        pdf.setFont(
+            "Helvetica",
+            11
+        )
+
+        pdf.drawString(
+            50,
+            y,
+            f"Schule: {schule}"
+        )
+
+        y -= 20
+
+        pdf.drawString(
+            50,
+            y,
+            f"Abschluss: {abschluss}"
+        )
+
+        pdf.save()
+
+        fertig.config(
+            text="✓ Dein Lebenslauf wurde erstellt!"
+        )
+
+
+    erstellen_button = tk.Button(
+        root,
+        text="PDF erstellen",
+        font=("Arial", 13, "bold"),
+        command=pdf_erstellen,
+        padx=20,
+        pady=8
+    )
+
+    erstellen_button.pack(pady=20)
+
+    fertig = tk.Label(
+        root,
+        text="",
+        font=("Arial", 12),
+        bg="white"
+    )
+
+    fertig.pack()
+
+
+root.mainloop()
